@@ -683,7 +683,6 @@ def train_target(args):
 
         loss_a = torch.mean(
             (F.kl_div(softmax_out_un, score_near_a.cuda(), reduction="none").sum(-1)).sum(1)
-            # 总结就是所有的topk的sofmax和当前batch的softmax的kl散度，当前batch的softmax复制了5份
         )  # Equal to dot product
 
         pseudo_label = torch.softmax(outputs_test.detach() / args.T, dim=-1)  # logits_u_w
@@ -738,10 +737,8 @@ def train_target(args):
         fine_tune = 0
         model = nn.Sequential(netF, netB)
 
-        #if iter_num % (interval_iter*10) == 0 or iter_num == max_iter:
-            #print("Iter:{}/{}".format(iter_num, max_iter))
+
         if iter_num % (interval_iter*10) == 0 or iter_num == max_iter: # or iter_num / interval_iter >= (args.max_epoch - 1) * 10:
-        #if iter_num / interval_iter >= (args.max_epoch - 1) * 10 and (iter_num % interval_iter == 0 or iter_num == max_iter):
             netF.eval()
             netB.eval()
             netC.eval()
@@ -771,146 +768,6 @@ def train_target(args):
             netF.train()
             netB.train()
             netC.train()
-            """if acc>acc_log:
-                acc_log = acc
-                torch.save(
-                    netF.state_dict(),
-                    osp.join(args.output_dir, "target_F_" + '2021_'+str(args.tag) + ".pt"))
-                torch.save(
-                    netB.state_dict(),
-                    osp.join(args.output_dir,
-                                "target_B_" + '2021_' + str(args.tag) + ".pt"))
-                torch.save(
-                    netC.state_dict(),
-                    osp.join(args.output_dir,
-                                "target_C_" + '2021_' + str(args.tag) + ".pt"))"""
-    '''
-    # fine-tuning
-    print("fine-tuning start!")
-    fine_tune = 1
-    networks = nn.Sequential(netF, netB)
-    # networks = nn.Sequential(netF, net_fc)
-    # networks, feature_dim = load_network('resnet50')
-    model = TuningBase(network=networks, backbone='resnet50', queue_size=args.queue_size,  # 'MOCOv2'
-                        projector_dim=256, feature_dim=2048,  # args.bottleneck
-                        class_num=args.class_num, momentum=0.999).cuda()
-    # classifier = network.feat_classifier(type=args.layer, class_num = args.class_num, bottleneck_dim=feature_dim).cuda()
-    # classifier = Classifier(2048, args.class_num).cuda()
-    # reset lr, optimizer and scheduler5
-    optimizer = optim.SGD([
-        {'params': model.parameters()},
-        {'params': netC.parameters(), 'lr': 0.01},
-    ], lr=0.001, momentum=0.9, weight_decay=5e-4, nesterov=True)
-    milestones = [3000, 6000, 9000, 12000]
-    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones, gamma=0.1)
-    criterions = {"CrossEntropy": nn.CrossEntropyLoss(), "KLDiv": nn.KLDivLoss(reduction='batchmean')}
-
-    epoch = 0
-    # shuffle数据
-    a = torch.randperm(retrain_input_all.size(0))
-
-    retrain_input_all = retrain_input_all[a, :, :, :]
-
-    retrain_pseudo_all = retrain_pseudo_all[a].to(torch.int64)
-
-    retrain_feat_all = retrain_feat_all[a, :]
-
-    retrain_idx_all = retrain_idx_all[a]
-
-    while epoch < args.epoch_ft:
-        # netF.train()
-        # netB.train()
-        model.train()
-        netC.train()
-        # classifier.train()
-
-        epoch_iter = math.ceil(retrain_input_all.size(0) / args.batch_size)
-        for i in range(epoch_iter):
-            if i <= math.ceil(retrain_input_all.size(0) / args.batch_size) - 1:
-                # inputs_ft_0 = retrain_input_all_0[i*args.batch_size:(i+1)*args.batch_size,:,:,:].cuda()
-                # inputs_ft_1 = retrain_input_all_1[i * args.batch_size:(i + 1) * args.batch_size, :, :, :].cuda()
-                inputs_ft = retrain_input_all[i * args.batch_size:(i + 1) * args.batch_size, :, :, :].cuda()
-                # feat_ft = retrain_feat_all[i*args.batch_size:(i+1)*args.batch_size,:].cuda()
-                pred_ft = retrain_pseudo_all[i * args.batch_size:(i + 1) * args.batch_size].cuda()
-                idx_ft = retrain_idx_all[i * args.batch_size:(i + 1) * args.batch_size].cuda()
-            else:
-                # inputs_ft_0 = retrain_input_all_0[i * args.batch_size:, :, :, :].cuda()
-                # inputs_ft_1 = retrain_input_all_1[i * args.batch_size:, :, :, :].cuda()
-                inputs_ft = retrain_input_all[i * args.batch_size:, :, :, :].cuda()
-                # feat_ft = retrain_feat_all[i * args.batch_size:, :].cuda()
-                pred_ft = retrain_pseudo_all[i * args.batch_size:].cuda()
-                idx_ft = retrain_idx_all[i * args.batch_size:].cuda()
-
-            if inputs_ft.size(0) == 1:
-                continue
-
-            # feat, _ = netF(inputs_ft)
-            PGC_logit_labeled, PGC_label_labeled, feat_labeled = model(inputs_ft, inputs_ft, pred_ft)
-            outputs_ft = netC(feat_labeled)  # netC    feat/feat_ft
-            softmax_out = nn.Softmax(dim=1)(outputs_ft)
-            # PGC_loss_labeled = criterions['KLDiv'](PGC_logit_labeled,
-            # PGC_label_labeled)  # Contrastive loss for instances with the same labels
-
-            output_f_norm = F.normalize(feat_labeled)
-            output_f_ = output_f_norm.cpu().detach().clone()
-
-
-            pred_bs = softmax_out
-
-            fea_bank[idx_ft.type(torch.long)] = output_f_.detach().clone().cpu()
-            score_bank[idx_ft.type(torch.long)] = softmax_out.detach().clone()
-
-            if args.cls_par > 0:
-                classifier_loss = nn.CrossEntropyLoss()(outputs_ft, pred_ft)
-                classifier_loss *= args.cls_par
-                if iter_num < interval_iter and args.dset == "VISDA-C":
-                    classifier_loss *= 0
-            else:
-                classifier_loss = torch.tensor(0.0).cuda()
-
-            if args.ent:
-                softmax_out = nn.Softmax(dim=1)(outputs_ft)
-                entropy_loss = torch.mean(loss1.Entropy(softmax_out))
-                if args.gent:
-                    msoftmax = softmax_out.mean(dim=0)
-                    gentropy_loss = torch.sum(-msoftmax * torch.log(msoftmax + args.epsilon))
-                    entropy_loss -= gentropy_loss
-                im_loss = entropy_loss * args.ent_par
-                classifier_loss += im_loss
-
-                # classifier_loss = nn.CrossEntropyLoss()(outputs_ft, pred_ft)
-            total_loss = classifier_loss  # + 0.2 * PGC_loss_labeled
-
-            optimizer.zero_grad()
-            total_loss.backward()
-            optimizer.step()
-            scheduler.step()
-        epoch += 1
-
-        # testing after training each epoch
-        # netF.eval()
-        # netB.eval()
-        model.eval()
-        netC.eval()
-        # classifier.eval()
-        if args.dset == 'VISDA-C':
-            acc_s_te, acc_list = cal_acc(rationale, fine_tune, model, dset_loaders['test'], fea_bank, score_bank, netF, netB, netC, args,
-                                            True)
-            log_str = 'Task: {}, Epoch:{}/{}; Accuracy = {:.2f}%'.format(args.name, epoch, args.epoch_ft,
-                                                                            acc_s_te) + '\n' + acc_list
-        else:
-            acc_s_te, _ = cal_acc(rationale, fine_tune, model, dset_loaders['test'], fea_bank, score_bank , netF, netB, netC, args, False)
-            log_str = 'Task: {}, Epoch:{}/{}; Accuracy = {:.2f}%'.format(args.name, epoch, args.epoch_ft, acc_s_te)
-
-        args.out_file.write(log_str + '\n')
-        args.out_file.flush()
-        print(log_str + '\n')
-        # netF.train()
-        # netB.train()
-        model.train()
-        netC.train()
-        # classifier.train()
-    '''
     return netF, netB, netC
 
 def obtain_label(loader, netF, netB, netC, args, rationale, iter_num, interval_iter):
@@ -1455,7 +1312,7 @@ if __name__ == "__main__":
             continue
         args.t = i
 
-        folder = "./data/"#"/data/yangyang/AaD_SFDA/data/"#"./data/"#"/fast/fast_yangyang/yangyang/SHOT/object/data/"
+        folder = "./data/"
         args.s_dset_path = folder + args.dset + "/" + names[args.s] + "_list.txt"
         args.t_dset_path = folder + args.dset + "/" + names[args.t] + "_list.txt"
         args.test_dset_path = folder + args.dset + "/" + names[args.t] + "_list.txt"
