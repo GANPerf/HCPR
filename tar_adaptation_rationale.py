@@ -653,29 +653,6 @@ def train_target(args):
         softmax_out_un_far = softmax_out.unsqueeze(1).expand(
             -1, 2, -1
         )  # batch x K x C
-        '''
-        feats_w, logits_w = moco_model(inputs_test[2].cuda(), cls_only=True)
-
-        with torch.no_grad():
-            probs_w = F.softmax(logits_w, dim=1)
-            pseudo_labels_w, probs_w, _, _ = refine_predictions(feats_w, probs_w, banks)
-        #probs_w = F.softmax(logits_w, dim=1)
-        #pseudo_labels_w = probs_w.max(1)[1]
-
-        _, logits_q, logits_ctr, keys = moco_model(inputs_test[0].cuda(), inputs_test[1].cuda())
-
-
-        loss_ctr = contrastive_loss(
-            logits_ins=logits_ctr,
-            pseudo_labels=moco_model.mem_labels[tar_idx],
-            mem_labels=moco_model.mem_labels[moco_model.idxs]
-        )
-
-        # update key features and corresponding pseudo labels
-        if iter_num % len(dset_loaders["target"]) == 0:
-            epoch = iter_num // len(dset_loaders["target"])
-            moco_model.update_memory(epoch, tar_idx.cuda(), keys, pseudo_labels_w, target_label.cuda())
-        '''
         loss = torch.mean(
             (F.kl_div(softmax_out_un, score_near, reduction="none").sum(-1)).sum(1)
         ) # Equal to dot product
@@ -808,36 +785,11 @@ def obtain_label(loader, netF, netB, netC, args, rationale, iter_num, interval_i
     all_output = nn.Softmax(dim=1)(all_output)
     #if iter_num/interval_iter >= (args.max_epoch-1)*10:
     retrain_input_all_w, retrain_input_all_s1,retrain_input_all_s2, retrain_feat_all, retrain_fea_all, retrain_output_all, retrain_idx_all, retrain_pseudo_all, retrain_label_all = select_sort_num(args, rationale, netF, netB, netC, all_feat, all_fea, all_output, all_label, all_idx, all_input_w, all_input_s1, all_input_s2)
-    #else:
-        #retrain_input_all, retrain_feat_all, retrain_fea_all, retrain_output_all, retrain_idx_all, retrain_pseudo_all, retrain_label_all = [],[],[],[],[],[],[]
 
     ent = torch.sum(-all_output * torch.log(all_output + args.epsilon), dim=1)
     unknown_weight = 1 - ent / np.log(args.class_num)
     #all_output[:,33] = all_output[:,33]*2
     confidence, predict = torch.max(all_output, 1)
-
-    '''
-    #********************for semi-supervised
-    con_np = confidence.float().cpu().numpy()
-    con_index_np = np.argwhere(con_np >= 0.95)
-    con_index = torch.from_numpy(con_index_np.squeeze())
-    retrain_input_all_w = all_input_w[con_index, :,:,:]
-    retrain_input_all_s1 = all_input_s1[con_index,:,:,:]
-    retrain_input_all_s2 = all_input_s2[con_index, :, :, :]
-    retrain_feat_all = all_feat[con_index,:]
-    retrain_fea_all = all_fea[con_index, :]
-    retrain_output_all = all_output[con_index,:]
-    retrain_idx_all = all_idx[con_index]
-    retrain_pseudo_all = predict[con_index]
-    retrain_label_all = all_label[con_index]
-    
-    accuracy_con = torch.sum(torch.squeeze(predict[con_index]).float() == all_label[con_index]).item() / float(
-        all_label[con_index].size()[0])
-
-    print("the selected number: %.4f" % (float(all_label[con_index].size()[0])))
-    print("the selected acc: %.4f" % (accuracy_con * 100))
-    #*******************
-    '''
 
     #************************
     #class_id = np.where(predict == 33)
@@ -881,12 +833,6 @@ def obtain_label(loader, netF, netB, netC, args, rationale, iter_num, interval_i
     args.out_file.write(log_str + '\n')
     args.out_file.flush()
     print(log_str+'\n')
-    '''
-    featc = torch.from_numpy(initc[:,0:256])
-    all_a_predict, all_a_label, all_a_path, all_a_idx = change_half_label(args, netF, netB, netC, predict, all_feat, all_input, all_output, all_label, all_path, featc, rationale, all_idx)
-    for i in range(all_a_predict.size(0)):
-        all_a_predict[all_a_idx[i]] = all_a_predict[i]
-    '''
 
     return predict.astype('int'), retrain_input_all_w, retrain_input_all_s1,retrain_input_all_s2, retrain_feat_all, retrain_fea_all, retrain_idx_all, retrain_pseudo_all, retrain_label_all, retrain_output_all
 
@@ -1046,61 +992,7 @@ def select_sort_num(args, rationale, netF, netB, netC, all_feat, all_fea, all_ou
                 temp = torch.tensor(temp)
                 retrain_label_all = torch.cat((retrain_label_all, temp), 0)
 
-                #temp = np.expand_dims(all_path[i], 0)
-                #retrain_path_all = np.concatenate((retrain_path_all, temp), 0)
-    '''
-    accuracy = torch.sum(torch.squeeze(retrain_pseudo_all).float() == retrain_label_all).item() / float(
-        retrain_label_all.size()[0])
-
-
-    print("the first time selected number: %.4f" % (retrain_label_all.size()[0]))
-    print("the first time selected acc: %.4f" % (accuracy * 100))
-
-    for i in tqdm(range(all_output.size(0))):  # 4365
-        if all_idx[i] not in retrain_idx_all:
-            sub_rank = rank[i * args.sort_num:(i + 1) * args.sort_num]
-
-            rank_rank = torch.ones(sub_rank.size(0))
-            predict_id = torch.tensor([0,1,2,3,4])
-            temp = sub_rank[torch.argsort(sub_rank,descending=False)]  # 从小到大排序，找到要查找的分数占该类的位置
-            for j in range(sub_rank.size(0)):
-                for k in range(temp.size(0)):
-                    if sub_rank[j] == temp[k]:
-                        rank_rank[j] = k
-
-
-            #b, b_idx = torch.sort(sub_rank)
-
-            #temp = psuedo_select[i, args.sort_num-1-torch.argmin(torch.abs(torch.flip(rank_rank, dims=[0])+torch.flip(predict_id, dims=[0])))]  # tensor(num)->tensor([num])
-            temp = psuedo_select[i, torch.argmin(rank_rank + predict_id)]  # tensor(num)->tensor([num])
-            #temp = psuedo_select[i, b_idx[1]]
-
-            temp = np.expand_dims(temp, 0)
-            temp = torch.tensor(temp)
-            retrain_pseudo_all = torch.cat((retrain_pseudo_all, temp), 0)
-
-            retrain_input_all = torch.cat((retrain_input_all, torch.unsqueeze(all_input[i, :, :, :], 0)), 0)
-
-            retrain_feat_all = torch.cat((retrain_feat_all, torch.unsqueeze(all_feat[i, :], 0)), 0)
-
-            retrain_fea_all = torch.cat((retrain_fea_all, torch.unsqueeze(all_fea[i, :], 0)), 0)
-
-            retrain_output_all = torch.cat((retrain_output_all, torch.unsqueeze(all_output[i, :], 0)), 0)
-
-            temp = all_idx[i]  # tensor(num)->tensor([num])
-            temp = np.expand_dims(temp, 0)
-            temp = torch.tensor(temp)
-            retrain_idx_all = torch.cat((retrain_idx_all, temp), 0)
-
-            temp = all_label[i]  # tensor(num)->tensor([num])
-            temp = np.expand_dims(temp, 0)
-            temp = torch.tensor(temp)
-            retrain_label_all = torch.cat((retrain_label_all, temp), 0)
-
-            temp = np.expand_dims(all_path[i], 0)
-            retrain_path_all = np.concatenate((retrain_path_all, temp), 0)
-    '''
-
+  
     accuracy = torch.sum(torch.squeeze(retrain_pseudo_all).float() == retrain_label_all).item() / float(
         retrain_label_all.size()[0])
 
