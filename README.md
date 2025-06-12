@@ -1,4 +1,4 @@
-## Source-Free Unsupervised Domain Adaptation with Hypothesis Consolidation of Prediction Rationale
+## Seeing Beyond Labels: Source-Free Domain Adaptation via Hypothesis Consolidation of Prediction Rationale
 
 ##### _Yangyang Shu, Yuhang Liu, Xiaofeng Cao, Qi Chen, Bowen Zhang, Ziqin Zhou, Anton van den Hengel and Lingqiao Liu*_
 
